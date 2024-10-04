@@ -22,3 +22,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+calm_model/
+calm_model_config/
+tmp/
+wandb/
+calm_saves
+.venv

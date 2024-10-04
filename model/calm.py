@@ -263,6 +263,7 @@ class CALM(transformers.PreTrainedModel):
 
   def forward(
       self,
+      original_input_ids: torch.LongTensor = None,
       input_ids: torch.LongTensor = None,
       attention_mask: Optional[torch.Tensor] = None,
       position_ids: Optional[torch.LongTensor] = None,
@@ -310,10 +311,10 @@ class CALM(transformers.PreTrainedModel):
       output = model(input_ids, attention_mask)
     """
     aug_output = self._forward_aug(
-        input_ids=input_ids,
+        input_ids=original_input_ids,
         attention_mask=attention_mask,
         position_ids=position_ids,
-        past_key_values=past_key_values,
+        past_key_values=None,
         inputs_embeds=inputs_embeds,
         labels=labels,
         use_cache=use_cache,
@@ -413,6 +414,7 @@ class CALM(transformers.PreTrainedModel):
     Returns:
       The prepared inputs for generation.
     """
+    original_input_ids = input_ids.clone()
     past_length = 0
     if past_key_values is not None:
       if isinstance(past_key_values, transformers.Cache):
@@ -486,6 +488,7 @@ class CALM(transformers.PreTrainedModel):
       cache_position = cache_position[-input_length:]
 
     model_inputs.update({
+        "original_input_ids": original_input_ids,
         "position_ids": position_ids,
         "cache_position": cache_position,
         "past_key_values": past_key_values,
