@@ -28,8 +28,8 @@ class CalmTest(unittest.TestCase):
     """Sets up the CALM model for testing."""
     super().setUp()
     self.config = calm.CALMConfig(
-        anchor_model="google/gemma-2b",
-        aug_model="google/gemma-2b",
+        anchor_model="Qwen/Qwen2.5-7B-instruct",
+        aug_model="Qwen/Qwen2.5-0.5B",
         num_connections=2,
         num_heads=1,
     )
@@ -38,37 +38,37 @@ class CalmTest(unittest.TestCase):
   def test_calm_config(self):
     """Tests that the CALM configuration is set correctly."""
     config = calm.CALMConfig(
-        anchor_model="google/gemma-2b",
-        aug_model="google/gemma-2b",
+        anchor_model="Qwen/Qwen2.5-7B-instruct",
+        aug_model="Qwen/Qwen2.5-0.5B",
         num_connections=2,
         num_heads=1,
     )
-    self.assertEqual(config.anchor_model, "google/gemma-2b")
-    self.assertEqual(config.aug_model, "google/gemma-2b")
+    self.assertEqual(config.anchor_model, "Qwen/Qwen2.5-7B-instruct")
+    self.assertEqual(config.aug_model, "Qwen/Qwen2.5-0.5B")
     self.assertEqual(config.num_connections, 2)
 
   def test_calm_forward(self):
     """Tests whether the CALM model returns the same output shape as the anchor model."""
     output = self.model(
-        input_ids=torch.ones(1, 10),
-        attention_mask=torch.ones(1, 10),
+        input_ids=torch.ones(1, 10,dtype=torch.long),
+        attention_mask=torch.ones(1, 10,dtype=torch.long),
     )
     output_anchor_model = self.model.anchor_model(
-        input_ids=torch.ones(1, 10),
-        attention_mask=torch.ones(1, 10),
+        input_ids=torch.ones(1, 10,dtype=torch.long),
+        attention_mask=torch.ones(1, 10,dtype=torch.long),
     )
     self.assertEqual(output[0].shape, output_anchor_model[0].shape)
 
   def test_calm_connections(self):
     """Tests that the CALM connections are set correctly."""
     config = calm.CALMConfig(
-        anchor_model="google/gemma-2b",
-        aug_model="google/gemma-2b",
+        anchor_model="Qwen/Qwen2.5-7B-instruct",
+        aug_model="Qwen/Qwen2.5-0.5B",
         num_connections=2,
         num_heads=1,
     )
     model = calm.CALM(config)
-    self.assertEqual(model.connections, [(0, 0), (17, 17)])
+    self.assertEqual(model.connections, [(0, 0), (27, 23)])
 
   def test_get_hidden_dim(self):
     """Tests that the hidden dimensions are set correctly."""

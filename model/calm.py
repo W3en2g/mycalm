@@ -112,12 +112,13 @@ class CALM(transformers.PreTrainedModel):
       config.aug_config = transformers.AutoConfig.from_pretrained(
           config.aug_model
       )
+    # Qwen2 specific
     if isinstance(config.anchor_config, dict):
-      config.anchor_config = transformers.GemmaConfig.from_dict(
+      config.anchor_config = transformers.Qwen2Config.from_dict(
           config.anchor_config
       )
     if isinstance(config.aug_config, dict):
-      config.aug_config = transformers.GemmaConfig.from_dict(config.aug_config)
+      config.aug_config = transformers.Qwen2Config.from_dict(config.aug_config)
 
     self.anchor_model = transformers.AutoModelForCausalLM.from_pretrained(
         config.anchor_model,
@@ -177,7 +178,7 @@ class CALM(transformers.PreTrainedModel):
       )
 
     layers.freeze_model(self.anchor_model)
-    layers.freeze_model(self.aug_model)
+    # layers.freeze_model(self.aug_model)
 
     for connection_idx, connection in enumerate(self.connections):
       connection_anchor_layer_idx = connection[0]
@@ -235,30 +236,30 @@ class CALM(transformers.PreTrainedModel):
     returned.
     """
 
-    with torch.no_grad():
-      self.aug_model.eval()
-      output = self.aug_model(
-          input_ids=input_ids,
-          attention_mask=attention_mask,
-          position_ids=position_ids,
-          past_key_values=past_key_values,
-          inputs_embeds=inputs_embeds,
-          labels=labels,
-          use_cache=use_cache,
-          output_attentions=output_attentions,
-          output_hidden_states=output_hidden_states,
-          return_dict=return_dict,
-          cache_position=cache_position,
+    # with torch.no_grad(): # 让aug_model不计算梯度
+    self.aug_model.eval()
+    output = self.aug_model(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        position_ids=position_ids,
+        past_key_values=past_key_values,
+        inputs_embeds=inputs_embeds,
+        labels=labels,
+        use_cache=use_cache,
+        output_attentions=output_attentions,
+        output_hidden_states=output_hidden_states,
+        return_dict=return_dict,
+        cache_position=cache_position,
+    )
+    for connection_idx, connection in enumerate(self.connections):
+      aug_hidden_state = self.extract_hidden_state_hooks[
+          tuple(connection)
+      ].hidden_state
+      self.cross_attention_hooks[connection_idx].aug_hidden_state = (
+          aug_hidden_state
       )
-      for connection_idx, connection in enumerate(self.connections):
-        aug_hidden_state = self.extract_hidden_state_hooks[
-            tuple(connection)
-        ].hidden_state
-        self.cross_attention_hooks[connection_idx].aug_hidden_state = (
-            aug_hidden_state
-        )
-        self.cross_attention_hooks[connection_idx].aug_mask = attention_mask
-        del aug_hidden_state
+      self.cross_attention_hooks[connection_idx].aug_mask = attention_mask
+      del aug_hidden_state
     return output
 
   def forward(
@@ -310,8 +311,12 @@ class CALM(transformers.PreTrainedModel):
       model = CALM(config)
       output = model(input_ids, attention_mask)
     """
+    if original_input_ids is not None:
+      real_input_ids = original_input_ids
+    else:
+      real_input_ids = input_ids
     aug_output = self._forward_aug(
-        input_ids=original_input_ids,
+        input_ids=real_input_ids,
         attention_mask=attention_mask,
         position_ids=position_ids,
         past_key_values=None,
@@ -383,7 +388,8 @@ class CALM(transformers.PreTrainedModel):
         save_function=save_function,
         push_to_hub=push_to_hub,
         max_shard_size=max_shard_size,
-        safe_serialization=False,
+        safe_serialization=True,
+        # safe_serialization=False,
         variant=variant,
         token=token,
         save_peft_format=save_peft_format,

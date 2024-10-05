@@ -28,4 +28,5 @@ calm_model_config/
 tmp/
 wandb/
 calm_saves
+memory
 .venv

@@ -31,7 +31,7 @@ from transformers import AutoTokenizer
 from transformers import DataCollatorForLanguageModeling
 from transformers import Trainer
 from transformers import TrainingArguments
-
+import json
 
 _ANCHOR_MODEL_DIR = flags.DEFINE_string(
     'anchor_model_dir', None, 'anchor model path.'
@@ -57,8 +57,11 @@ _SAVE_STEPS = flags.DEFINE_integer('save_steps', 50, 'save steps.')
 _MAX_STEPS = flags.DEFINE_integer('max_steps', 10, 'max steps.')
 
 
+
+
+
 def train(argv: Sequence[str]) -> None:
-  """Trains the CALM model."""
+    """Trains the CALM model."""
     del argv  # Unused.
     anchor_model_path = _ANCHOR_MODEL_DIR.value
     aug_model_path = _AUG_MODEL_DIR.value
@@ -79,14 +82,27 @@ def train(argv: Sequence[str]) -> None:
     )
 
     model = calm.CALM(calm_config)
-    train_data = datasets.load_dataset(
-        path='Salesforce/wikitext', name='wikitext-2-raw-v1'
-    )
+
+
+
+    def load_qa_data(file_path):
+        # 读取JSON文件
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
 
     def preprocess_function(examples):
-      return tokenizer(
-          examples['text'], truncation=True, padding='max_length', max_length=512
-      )
+        # 将QA数据转换为模型输入格式
+        inputs = [ex['instruction'] + ex['input'] for ex in examples]
+        targets = [ex['output'] for ex in examples]
+        model_inputs = tokenizer(inputs, truncation=True, padding='max_length', max_length=8000)
+        labels = tokenizer(targets, truncation=True, padding='max_length', max_length=8000)
+        model_inputs['labels'] = labels['input_ids']
+        return model_inputs
+    
+    # 加载QA数据
+    qa_data = load_qa_data('filtered_familyclic_sc.json')
+    train_data = datasets.Dataset.from_dict(qa_data)
 
     train_data = train_data.map(preprocess_function, batched=True)
     data_collator = DataCollatorForLanguageModeling(
@@ -109,7 +125,7 @@ def train(argv: Sequence[str]) -> None:
         do_eval=True,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
-        eval_strategy='steps',  # pylint:disable=unexpected-keyword-arg
+        eval_strategy='steps',
         eval_steps=eval_steps,
         logging_steps=logging_steps,
         save_steps=save_steps,
@@ -122,8 +138,8 @@ def train(argv: Sequence[str]) -> None:
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=train_data['train'],
-        eval_dataset=train_data['test'],
+        train_dataset=train_data,
+        eval_dataset=None,  # 如果没有验证集，可以设置为None
         data_collator=data_collator,
         tokenizer=tokenizer,
     )
@@ -132,13 +148,9 @@ def train(argv: Sequence[str]) -> None:
 
     trainer.train()
 
-    #   if trainer.is_fsdp_enabled:
-    #     trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
-
     trainer.save_model(
         output_dir,
     )
-    #   model.save_pretrained(output_dir)
 
     print(f'Training complete! Model saved to {output_dir}')
 

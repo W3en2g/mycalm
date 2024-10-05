@@ -31,7 +31,7 @@ from transformers import AutoTokenizer
 from transformers import DataCollatorForLanguageModeling
 from transformers import Trainer
 from transformers import TrainingArguments
-
+import json
 
 _ANCHOR_MODEL_DIR = flags.DEFINE_string(
     'anchor_model_dir', None, 'anchor model path.'
@@ -39,7 +39,7 @@ _ANCHOR_MODEL_DIR = flags.DEFINE_string(
 _AUG_MODEL_DIR = flags.DEFINE_string('aug_model_dir', None, 'aug model path.')
 _OUTPUT_DIR = flags.DEFINE_string('output_dir', None, 'output directory.')
 _LEARNING_RATE = flags.DEFINE_float('learning_rate', 2e-5, 'learning rate.')
-_EPOCHS = flags.DEFINE_integer('epochs', 3, 'number of epochs.')
+_EPOCHS = flags.DEFINE_integer('epochs', 100, 'number of epochs.')
 _BATCH_SIZE = flags.DEFINE_integer('batch_size', 1, 'batch size.')
 _NUM_HEADS = flags.DEFINE_integer('num_heads', 1, 'number of heads.')
 _NUM_CONNECTIONS = flags.DEFINE_integer(
@@ -53,12 +53,33 @@ _CONNECTIONS = flags.DEFINE_list(
 )
 _EVAL_STEPS = flags.DEFINE_integer('eval_steps', 50, 'eval steps.')
 _LOGGING_STEPS = flags.DEFINE_integer('logging_steps', 50, 'logging steps.')
-_SAVE_STEPS = flags.DEFINE_integer('save_steps', 50, 'save steps.')
-_MAX_STEPS = flags.DEFINE_integer('max_steps', 10, 'max steps.')
+_SAVE_STEPS = flags.DEFINE_integer('save_steps', 200, 'save steps.')
+_MAX_STEPS = flags.DEFINE_integer('max_steps', 2000, 'max steps.')
 
+import matplotlib.pyplot as plt
+def plot_losses(trainer, output_dir):
+    # 提取训练和评估损失
+    logs = trainer.state.log_history
+    train_loss = [log['loss'] for log in logs if 'loss' in log]
+    eval_loss = [log['eval_loss'] for log in logs if 'eval_loss' in log]
+    steps = range(len(train_loss))
+    # every step * save_steps
+    steps = [step * _LOGGING_STEPS.value for step in steps]
+    # 绘制损失曲线
+    plt.figure(figsize=(10, 5))
+    plt.plot(steps, train_loss, label='Train Loss')
+    plt.plot(steps, eval_loss, label='Eval Loss')
+    plt.xlabel('Steps')
+    plt.ylabel('Loss')
+    plt.title('Training and Evaluation Loss')
+    plt.legend()
+    plt.grid(True)
+
+    # 保存为PNG文件
+    plt.savefig(f'{output_dir}/loss_curve.png')
+    plt.close()
 
 def train(argv: Sequence[str]) -> None:
-  """Trains the CALM model."""
     del argv  # Unused.
     anchor_model_path = _ANCHOR_MODEL_DIR.value
     aug_model_path = _AUG_MODEL_DIR.value
@@ -79,16 +100,45 @@ def train(argv: Sequence[str]) -> None:
     )
 
     model = calm.CALM(calm_config)
-    train_data = datasets.load_dataset(
-        path='Salesforce/wikitext', name='wikitext-2-raw-v1'
-    )
+
+    def load_dialogue_data(file_path):
+        # 读取JSON文件
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        qa_pairs = []
+        for item in data:
+            dialogue = item['dialogue']
+            for i in range(0, len(dialogue), 2):
+                if i + 1 < len(dialogue):
+                    user_turn = dialogue[i]
+                    assistant_turn = dialogue[i + 1]
+                    if user_turn['role'] == 'user' and assistant_turn['role'] == 'assistant':
+                        qa_pairs.append({
+                            'instruction': user_turn['content'],
+                            'input': '',
+                            'output': assistant_turn['content']
+                        })
+        return qa_pairs
 
     def preprocess_function(examples):
-      return tokenizer(
-          examples['text'], truncation=True, padding='max_length', max_length=512
-      )
+        inputs = [ex for ex in examples['instruction']]
+        targets = [ex for ex in examples['output']]
+        model_inputs = tokenizer(inputs, truncation=True, padding='max_length', max_length=256)
+        labels = tokenizer(targets, truncation=True, padding='max_length', max_length=256)
+        model_inputs['labels'] = labels['input_ids']
+        return model_inputs
 
+
+    # 加载对话数据并转换为QA格式
+    qa_data = load_dialogue_data('filtered_familyclic_sc.json')
+    full_data = datasets.Dataset.from_dict({'instruction': [d['instruction'] for d in qa_data],
+                                             'input': [d['input'] for d in qa_data],
+                                             'output': [d['output'] for d in qa_data]})
+    # print(full_data)
+    train_data, eval_data = full_data.train_test_split(test_size=0.1).values()
     train_data = train_data.map(preprocess_function, batched=True)
+    eval_data = eval_data.map(preprocess_function, batched=True)
+
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=False
     )
@@ -109,7 +159,7 @@ def train(argv: Sequence[str]) -> None:
         do_eval=True,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
-        eval_strategy='steps',  # pylint:disable=unexpected-keyword-arg
+        eval_strategy='steps',
         eval_steps=eval_steps,
         logging_steps=logging_steps,
         save_steps=save_steps,
@@ -122,8 +172,8 @@ def train(argv: Sequence[str]) -> None:
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=train_data['train'],
-        eval_dataset=train_data['test'],
+        train_dataset=train_data,
+        eval_dataset=eval_data,
         data_collator=data_collator,
         tokenizer=tokenizer,
     )
@@ -131,14 +181,10 @@ def train(argv: Sequence[str]) -> None:
     trainer.can_return_loss = True
 
     trainer.train()
-
-    #   if trainer.is_fsdp_enabled:
-    #     trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
-
+    plot_losses(trainer, output_dir)
     trainer.save_model(
         output_dir,
     )
-    #   model.save_pretrained(output_dir)
 
     print(f'Training complete! Model saved to {output_dir}')
 
